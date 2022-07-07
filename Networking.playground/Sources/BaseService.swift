@@ -16,8 +16,31 @@ public final class BaseService: NSObject, BaseServiceProtocol {
     public func request<T: Decodable>(with requestObject: RequestObject,
                                       decoder: JSONDecoder) async throws -> T {
         let urlRequest = try requestObject.getUrlRequest()
-        let (data, response) = try await urlSession.dataTask(for: urlRequest, delegate: self)
-        return try handle(response, with: decoder, with: data)
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+            request(with: urlRequest, decoder: decoder) { (result: Result<T, Error>) in
+                switch result {
+                case .success(let value):
+                    continuation.resume(returning: value)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func request<T: Decodable>(with urlRequest: URLRequest,
+                                       decoder: JSONDecoder,
+                                       completion: @escaping (Result<T, Error>) -> Void) {
+        urlSession.dataTask(for: urlRequest) { [weak self] data, response, error in
+            guard let self = self else { return }
+            do {
+                let result: T = try self.handle(response, with: decoder, with: data)
+                completion(.success(result))
+            } catch let resultError {
+                completion(.failure(resultError))
+            }
+        }
+
     }
     
     private func handle<T: Decodable>(_ response: URLResponse?,
